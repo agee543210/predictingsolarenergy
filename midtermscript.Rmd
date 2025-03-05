@@ -1,0 +1,268 @@
+---
+title: "MidtermAssignment"
+author: "Anita Gee"
+date: "2024-07-15"
+output: word_document
+---
+
+
+1) Find monthly time series data for at least five years.
+
+I used the residential solar energy consumption from this Kaggle Dataset, which is taken from the EIA.gov website.
+https://www.kaggle.com/datasets/alistairking/renewable-energy-consumption-in-the-u-s 
+
+I decided to take the data from the beginning of 1998 to the end of 2023 and then filtered it by residential solar energy consumption.
+
+```{r}
+# install the necessary packages
+library(fable)
+library(tsibble)
+library(forecast)
+library(zoo)
+library(ggplot2)
+library(dplyr)
+library(stats)
+library(knitr)
+```
+
+```{r}
+# upload the dataset
+# read in the csv file 
+mydata <-read.csv("~/Personal/Predictive analytics Class/Data/dataset.csv")
+
+# look at data
+head(mydata)
+
+# Combine Year and Month columns into one date column
+mydata$Date <- paste(mydata$Year, sprintf("%02d", mydata$Month), sep="-")
+
+
+# Filter by residential sector
+resmydata <- mydata %>%
+  filter(Sector == "Residential")
+```
+
+
+2) Use 80% of the data (e.g., the first four years-the training set) to build three models + one ensemblemodel (average of the three forecasts) for the last year.
+
+For 80% of the data, it is between 1998 and 2020. This is the train dataset. For the test dataset ( 20%), this is between 2021 and 2023.
+```{r}
+# create train and test datasets
+# split data between 1998-01 and 2020-12-31 by using Year column, this is 80% of our data, 20% for the test data.
+train_set <- resmydata[resmydata$Year %in% 1998:2020, ]
+test_set <- resmydata[resmydata$Year %in% 2021:2023, ]
+
+# now we create tsibble object
+
+# Convert 'Date' to a "yearmon" object
+train_set$Date <- as.yearmon(train_set$Date, "%Y-%m")
+test_set$Date <- as.yearmon(test_set$Date, "%Y-%m")
+# create time series object
+ts_traindata <- ts(train_set$Solar.Energy, start=c(1998, 1), end=c(2020, 12), frequency=12)
+ts_testdata <- ts(test_set$Solar.Energy, start=c(2021, 1), end=c(2023, 12), frequency=12)
+
+
+```
+
+The Models I have Chosen:
+
+I will use the Holt's Winter Multiplicative model, the SARIMA model, and the ANN model. The Ensemble model will be an average of these three models.
+
+SARIMA
+
+```{r}
+# Now let's fit an SARIMA model
+sarima_model <- auto.arima(ts_traindata, seasonal = TRUE)
+
+# Print the model
+print(sarima_model)
+
+```
+
+Holt's Winters Multiplicative Model
+
+```{r}
+#Holt-Winters multiplicative model, an ETS model
+hw_model <- HoltWinters(ts_traindata, seasonal = "multiplicative")
+
+# Print the model
+print(hw_model)
+```
+
+
+ANN Model
+
+```{r}
+# Fit a neural network model
+nn_model <- nnetar(ts_traindata)
+
+# print the model
+print(nn_model)
+```
+
+
+Ensemble Model- this is the average of the three models forecasts (36 months) :
+
+```{r}
+# Forecast for the next 36 months using the  models 
+
+# Forecast
+sarima_forecast <- forecast(sarima_model, h = 36)
+hw_forecast <- forecast(hw_model, h = 36)
+nn_forecast<- forecast(nn_model,h=36)
+
+# Calculate the average/ensemble forecast/model
+ensemble_forecast <- (hw_forecast$mean + sarima_forecast$mean + nn_forecast$mean) / 3
+
+# Print the ensemble forecast
+print(ensemble_forecast)
+```
+
+
+3) You will estimate appropriate model statistics on the with-held 20% test set.
+
+SARIMA forecasts:
+```{r}
+# print the SARIMA forecast
+print(sarima_forecast)
+```
+
+Holt's forecasts:
+```{r}
+# print the Holt's forecast
+print(hw_forecast)
+```
+
+ANN forecasts:
+```{r}
+# print the NN model forecast
+print(nn_forecast)
+```
+
+Now let's print the accuracy statistics in a nice table:
+
+
+```{r}
+# Calculate accuracy measures for the forecasts
+
+hw_accuracy <- accuracy(hw_forecast, ts_testdata)
+sarima_accuracy <- accuracy(sarima_forecast, ts_testdata)
+nn_accuracy <- accuracy(nn_forecast, ts_testdata)
+ensemble_accuracy <- accuracy(ensemble_forecast,ts_testdata)
+
+# Make table for accuracies
+# Create a data frame
+accuracy_df <- data.frame(
+  "Holt-Winters" = hw_accuracy,
+  "SARIMA" = sarima_accuracy,
+  "Neural Network" = nn_accuracy,
+  "Ensemble" = ensemble_accuracy
+)
+
+print(accuracy_df)
+# Create a nice looking table using kable()
+#kable(accuracy_df, caption = "Accuracy Measures for Each of the Models")
+```
+
+```{r}
+# Load the openxlsx package
+library(openxlsx)
+
+# Write the data frame to an Excel file
+write.xlsx(accuracy_df, file = "accuracy_measures.xlsx")
+
+
+# Create a new workbook
+wb <- createWorkbook()
+
+# Add a worksheet to the workbook
+addWorksheet(wb, "Sheet 1")
+
+# Write the data frame to the worksheet
+writeData(wb, "Sheet 1", accuracy_df)
+
+# Save the workbook to an Excel file
+saveWorkbook(wb, "accuracy_measures.xlsx", overwrite = TRUE)
+
+```
+
+
+4) You will compare these statistics across the models and suggest the best.
+
+Holt's Winter has the lowest error for Mean Error (ME), Root Mean Square Error (RMSE), Mean Absolute Error (MAE), Mean Percentage Error (MPE), Mean Absolute PErcentage Error (MAPE) and MASE (Mean Absolute Scaled Error). The only error that had the lowest ACF1 (Autocorrelation Function at Lag 1). 
+
+Given that Holt's Winter Multiplicative model has almost all of the lowest errors, it is the best model out of the four models to forecast resdiential solar energy consumption from 2021-2024. 
+
+5. Visuals
+
+Plot of test and train data
+```{r}
+autoplot(ts_traindata) +
+  # Add the test data
+  autolayer(ts_testdata, series="Test Data") +
+  # Add a legend
+  ggtitle("Total Residential Solar Renewable Energy Consumption in the US Over Time (1998-2023)") +
+  xlab("Year") + ylab("Residential Solar Renewable Energy Consumption") +
+  guides(colour=guide_legend(title="Series"))
+```
+
+Plot ot test,train and forecasts of all models
+
+```{r}
+autoplot(ts_traindata) +
+  # Add the test data
+  autolayer(ts_testdata, series="Test Data") +
+  # Add the neural network forecast
+  autolayer(nn_forecast, series="Neural Network Forecast",) +
+  # Add the SARIMA forecast
+  autolayer(sarima_forecast, series="SARIMA Forecast",) +
+  # Add the Holt Winters Multiplicative forecast
+  autolayer(hw_forecast, series="Holt's Winters Multiplicative Forecast",) +
+  # Add the ensemble forecast
+  autolayer(ensemble_forecast, series="Ensemble Forecast",) +
+  # Add a legend
+  ggtitle("Forecasts from Models with Test and Train data") +
+  xlab("Year") + ylab("Residential Solar Renewable Energy Consumption") +
+  guides(colour=guide_legend(title="Series"))
+```
+
+Plot of just the test data and the models
+
+```{r}
+autoplot(ts_testdata, series="Test Data") +
+  # add the Sarima forecast
+  autolayer(sarima_forecast, series="SARIMA Forecast", PI = FALSE ) +
+  # add the neural network forecast
+  autolayer(nn_forecast, series="Neural Network Forecast", PI = FALSE ) +
+  # Add the holt's winters forecast
+  autolayer(hw_forecast, series="Holt's Winter Forecast", PI= FALSE) +
+  # Add the ensemble forecast
+  autolayer(ensemble_forecast, series="Ensemble Forecast", PI = FALSE) +
+  # Add a legend
+  ggtitle("Forecasts from Models with only Test data") +
+  xlab("Year") + ylab("Residential Solar Renewable Energy Consumption") +
+  guides(colour=guide_legend(title="Series"))
+```
+
+Now we will do a plot with the test data and the forecasts with confidence intervals:
+```{r}
+autoplot(ts_testdata, series="Test Data") +
+  # add the Sarima forecast
+  autolayer(sarima_forecast, series="SARIMA Forecast",) +
+  # add the neural network forecast
+  autolayer(nn_forecast, series="Neural Network Forecast",) +
+  # Add the holt's winters forecast
+  autolayer(hw_forecast, series="Holt's Winter Forecast",) +
+  # Add the ensemble forecast
+  autolayer(ensemble_forecast, series="Ensemble Forecast",) +
+  # Add a legend
+  ggtitle("Forecasts from Models with only Test data and Confidence Bands") +
+  xlab("Year") + ylab("Residential Solar Renewable Energy Consumption") +
+  guides(colour=guide_legend(title="Series"))
+```
+Decomposition
+```{r}
+multiplicative_model <- decompose(ts_traindata, type = "multiplicative")
+plot(multiplicative_model)
+```
+
